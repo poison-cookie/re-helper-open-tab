@@ -2,11 +2,13 @@
 // @name         RE Helper - Open Tab
 // @namespace    https://github.com/poison-cookie/
 // @version      0.1.0
-// @description  不動産サイト上の図面・PDF・物件詳細リンクを別タブで開きやすくする業務補助ツール
+// @description  サイト上の図面・PDF・物件詳細リンクを別タブで開きやすくする業務補助ツール
 // @match        http://*/*
 // @match        https://*/*
+// @match        file:///*
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_openInTab
 // @grant        GM_registerMenuCommand
 // @run-at       document-idle
 // ==/UserScript==
@@ -24,6 +26,17 @@
   const BUTTON_CLASS = "re-helper-open-tab-button";
   const PROCESSED_ATTR = "data-re-helper-open-tab-processed";
   const BUTTON_ADDED_ATTR = "data-re-helper-open-tab-button-added";
+  const CLICK_HANDLER_ADDED_ATTR = "data-re-helper-open-tab-click-handler-added";
+  const RESERVED_TARGETS = new Set(["_blank", "_self", "_top", "_parent"]);
+  const FIXED_WINDOW_TARGETS = new Set([
+    "zumen",
+    "preview",
+    "pdf",
+    "print",
+    "detail",
+    "window",
+    "sub",
+  ]);
 
   const DRAWING_KEYWORDS = [
     "図面",
@@ -48,12 +61,14 @@
   ];
 
   const DEFAULT_SETTINGS = {
+    normalLinks: true,
     drawingLinks: true,
     pdfLinks: true,
     detailLinks: true,
     imageLinks: false,
     jsLinkButtons: true,
     forceWindowOpenUnique: false,
+    focusNewTabs: false,
     addOpenButtons: true,
   };
 
@@ -63,7 +78,7 @@
     excludeSelectors: [],
   };
 
-  const currentHost = location.hostname;
+  const currentHost = location.hostname || "local-file";
   const processedElements = new WeakSet();
   let observer = null;
   let observerTimer = 0;
@@ -180,7 +195,8 @@
     const globalSettings = getGlobalSettings();
     const siteSettings = getCurrentSiteSettings();
     const enabled =
-      getEnabledHosts().includes(currentHost) || siteSettings.enabled === true;
+      getEnabledHosts().includes(currentHost) ||
+      siteSettings.enabled === true;
 
     return {
       ...globalSettings,
@@ -212,24 +228,22 @@
     return `re_helper_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   }
 
+  function normalizeTargetName(target) {
+    return typeof target === "string" ? target.trim().toLowerCase() : "";
+  }
+
+  function isNamedBrowsingTarget(target) {
+    const normalizedTarget = normalizeTargetName(target);
+    return Boolean(normalizedTarget) && !RESERVED_TARGETS.has(normalizedTarget);
+  }
+
   function shouldRewriteWindowTarget(target) {
     if (!target || typeof target !== "string") {
       return true;
     }
 
-    const normalizedTarget = target.trim().toLowerCase();
-    const reservedTargets = new Set(["_blank", "_self", "_top", "_parent"]);
-    const fixedTargets = new Set([
-      "zumen",
-      "preview",
-      "pdf",
-      "print",
-      "detail",
-      "window",
-      "sub",
-    ]);
-
-    return !reservedTargets.has(normalizedTarget) && fixedTargets.has(normalizedTarget);
+    const normalizedTarget = normalizeTargetName(target);
+    return !RESERVED_TARGETS.has(normalizedTarget) && FIXED_WINDOW_TARGETS.has(normalizedTarget);
   }
 
   function patchWindowOpenIfNeeded(settings) {
@@ -267,6 +281,28 @@
     return /\.(jpg|jpeg|png|webp|gif)(?:\?|#|$)/i.test(value);
   }
 
+  function isPlainNavigableLink(element) {
+    if (!element || element.tagName !== "A") {
+      return false;
+    }
+
+    if (isJavaScriptLink(element) || element.hasAttribute("download")) {
+      return false;
+    }
+
+    const href = (element.getAttribute("href") || "").trim();
+    if (!href || href.startsWith("#") || /^(mailto|tel):/i.test(href)) {
+      return false;
+    }
+
+    const target = normalizeTargetName(element.getAttribute("target") || "");
+    if (target && target !== "_self" && target !== "_blank" && !isNamedBrowsingTarget(target)) {
+      return false;
+    }
+
+    return Boolean(toAbsoluteUrl(href));
+  }
+
   function isDetailLike(value) {
     return (
       DETAIL_KEYWORDS.some((keyword) => value.includes(keyword)) ||
@@ -280,6 +316,14 @@
 
   function shouldOpenInNewTab(element, settings) {
     const haystack = getElementHaystack(element);
+
+    if (settings.jsLinkButtons && isJavaScriptLink(element) && getElementUrl(element)) {
+      return true;
+    }
+
+    if (settings.normalLinks && isPlainNavigableLink(element)) {
+      return true;
+    }
 
     if (settings.drawingLinks && isDrawingLike(haystack)) {
       return true;
@@ -321,8 +365,9 @@
   function getElementUrl(element) {
     if (element.tagName === "A") {
       const href = element.getAttribute("href") || "";
+      const trimmedHref = href.trim();
 
-      if (href && !/^javascript:/i.test(href.trim())) {
+      if (trimmedHref && !/^javascript:/i.test(trimmedHref) && !trimmedHref.startsWith("#")) {
         return toAbsoluteUrl(element.href || href);
       }
     }
@@ -336,8 +381,101 @@
       return false;
     }
 
-    window.open(url, createUniqueTargetName(), "noopener,noreferrer");
+    const settings = getEffectiveSettings();
+    const focusNewTab = settings.focusNewTabs === true;
+
+    if (typeof GM_openInTab === "function") {
+      try {
+        GM_openInTab(url, {
+          active: focusNewTab,
+          insert: true,
+          setParent: true,
+        });
+        return true;
+      } catch (error) {
+        try {
+          GM_openInTab(url, !focusNewTab);
+          return true;
+        } catch (innerError) {
+          // Fall through to window.open.
+        }
+      }
+    }
+
+    if (typeof GM !== "undefined" && typeof GM.openInTab === "function") {
+      try {
+        GM.openInTab(url, {
+          active: focusNewTab,
+          insert: true,
+          setParent: true,
+        });
+        return true;
+      } catch (error) {
+        // Fall through to window.open.
+      }
+    }
+
+    const openedWindow = window.open(url, createUniqueTargetName(), "noopener,noreferrer");
+    if (!focusNewTab) {
+      try {
+        openedWindow?.blur?.();
+        window.focus();
+      } catch (error) {
+        // Browser focus policy may block this fallback.
+      }
+    }
     return true;
+  }
+
+  function makeAnchorOpenInSeparateTab(element) {
+    if (element.getAttribute(CLICK_HANDLER_ADDED_ATTR) === "true") {
+      return;
+    }
+
+    if (isNamedBrowsingTarget(element.getAttribute("target") || "")) {
+      element.setAttribute("target", createUniqueTargetName());
+    } else {
+      element.removeAttribute("target");
+    }
+
+    element.setAttribute("rel", "noopener noreferrer");
+    element.addEventListener("click", (event) => {
+      const url = getElementUrl(element);
+      if (!url) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+
+      if (isNamedBrowsingTarget(element.getAttribute("target") || "")) {
+        element.setAttribute("target", createUniqueTargetName());
+      }
+
+      if (!openUrlInNewTab(url)) {
+        location.href = url;
+        return;
+      }
+    }, true);
+
+    element.setAttribute(CLICK_HANDLER_ADDED_ATTR, "true");
+  }
+
+  function makeClickOpenInSeparateTab(element) {
+    if (element.getAttribute(CLICK_HANDLER_ADDED_ATTR) === "true") {
+      return;
+    }
+
+    element.addEventListener("click", (event) => {
+      const url = getElementUrl(element);
+      if (!url) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      openUrlInNewTab(url);
+    }, true);
+
+    element.setAttribute(CLICK_HANDLER_ADDED_ATTR, "true");
   }
 
   function withTemporaryWindowOpenPatch(callback) {
@@ -386,7 +524,7 @@
     if (
       element.getAttribute(BUTTON_ADDED_ATTR) === "true" ||
       !settings.addOpenButtons ||
-      (!settings.jsLinkButtons && element.tagName === "A")
+      !settings.jsLinkButtons
     ) {
       return;
     }
@@ -428,9 +566,21 @@
     element.setAttribute(BUTTON_ADDED_ATTR, "true");
   }
 
+  function removeOpenButton(element) {
+    if (element.nextElementSibling?.classList.contains(BUTTON_CLASS)) {
+      element.nextElementSibling.remove();
+    }
+
+    element.removeAttribute(BUTTON_ADDED_ATTR);
+  }
+
   function processElement(element, settings) {
-    if (processedElements.has(element) || shouldExcludeElement(element, settings)) {
+    if (shouldExcludeElement(element, settings)) {
       return;
+    }
+
+    if (!settings.addOpenButtons || !settings.jsLinkButtons) {
+      removeOpenButton(element);
     }
 
     const matchesTarget =
@@ -438,19 +588,22 @@
       shouldOpenInNewTab(element, settings);
 
     if (!matchesTarget) {
+      removeOpenButton(element);
       return;
     }
 
     if (element.tagName === "A" && !isJavaScriptLink(element)) {
-      element.setAttribute("target", "_blank");
-      element.setAttribute("rel", "noopener noreferrer");
+      makeAnchorOpenInSeparateTab(element);
+    }
+
+    if (isJavaScriptLink(element) && getElementUrl(element)) {
+      makeClickOpenInSeparateTab(element);
     }
 
     if (element.tagName !== "A" || isJavaScriptLink(element)) {
       addOpenButton(element, settings);
     }
 
-    processedElements.add(element);
     element.setAttribute(PROCESSED_ATTR, "true");
   }
 
@@ -539,15 +692,18 @@
         right: 14px;
         bottom: 14px;
         z-index: 2147483647;
-        width: 260px;
+        width: 300px;
+        max-width: calc(100vw - 28px);
+        max-height: calc(100vh - 28px);
+        overflow: auto;
         box-sizing: border-box;
         border: 1px solid #94a3b8;
-        border-radius: 6px;
+        border-radius: 8px;
         background: #ffffff;
         color: #0f172a;
         font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         font-size: 12px;
-        line-height: 1.4;
+        line-height: 1.35;
         box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
       }
       .${PANEL_CLASS} * {
@@ -562,6 +718,25 @@
         border-bottom: 1px solid #e2e8f0;
         font-weight: 700;
       }
+      .${PANEL_CLASS} .re-hot-title {
+        display: grid;
+        gap: 1px;
+        min-width: 0;
+      }
+      .${PANEL_CLASS} .re-hot-title-main {
+        font-size: 13px;
+        line-height: 1.2;
+      }
+      .${PANEL_CLASS} .re-hot-title-sub {
+        max-width: 190px;
+        overflow: hidden;
+        color: #64748b;
+        font-size: 11px;
+        font-weight: 500;
+        line-height: 1.2;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
       .${PANEL_CLASS} header button,
       .${PANEL_CLASS} .re-hot-actions button {
         border: 1px solid #cbd5e1;
@@ -570,24 +745,27 @@
         color: #0f172a;
         cursor: pointer;
         font-size: 12px;
-        padding: 3px 7px;
+        padding: 4px 8px;
       }
       .${PANEL_CLASS} .re-hot-body {
         padding: 8px 10px 10px;
       }
       .${PANEL_CLASS} label {
         display: flex;
-        align-items: center;
-        gap: 6px;
+        align-items: flex-start;
+        gap: 7px;
         margin: 4px 0;
+      }
+      .${PANEL_CLASS} input[type="checkbox"] {
+        margin-top: 2px;
       }
       .${PANEL_CLASS} textarea {
         width: 100%;
-        min-height: 44px;
+        min-height: 46px;
         resize: vertical;
         border: 1px solid #cbd5e1;
-        border-radius: 4px;
-        padding: 4px 6px;
+        border-radius: 6px;
+        padding: 5px 7px;
         font: inherit;
       }
       .${PANEL_CLASS} .re-hot-section {
@@ -597,11 +775,34 @@
       }
       .${PANEL_CLASS} .re-hot-section-title {
         margin-bottom: 4px;
-        color: #475569;
+        color: #334155;
         font-weight: 700;
+      }
+      .${PANEL_CLASS} .re-hot-note {
+        margin: 2px 0 6px;
+        color: #64748b;
+        font-size: 11px;
+      }
+      .${PANEL_CLASS} .re-hot-check-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        column-gap: 10px;
+      }
+      .${PANEL_CLASS} .re-hot-check-grid label {
+        min-width: 0;
+      }
+      .${PANEL_CLASS} details.re-hot-section {
+        display: block;
+      }
+      .${PANEL_CLASS} details.re-hot-section > summary {
+        cursor: pointer;
+        color: #334155;
+        font-weight: 700;
+        list-style-position: inside;
       }
       .${PANEL_CLASS} .re-hot-actions {
         display: flex;
+        justify-content: flex-end;
         gap: 6px;
         margin-top: 8px;
       }
@@ -609,6 +810,9 @@
         width: auto;
       }
       .${PANEL_CLASS}.is-collapsed .re-hot-body {
+        display: none;
+      }
+      .${PANEL_CLASS}.is-collapsed .re-hot-title-sub {
         display: none;
       }
       .${BUTTON_CLASS} {
@@ -649,6 +853,25 @@
     return section;
   }
 
+  function createDetailsSection(titleText, open = false) {
+    const details = document.createElement("details");
+    details.className = "re-hot-section";
+    details.open = Boolean(open);
+
+    const summary = document.createElement("summary");
+    summary.textContent = titleText;
+    details.appendChild(summary);
+
+    return details;
+  }
+
+  function appendNote(parent, text) {
+    const note = document.createElement("div");
+    note.className = "re-hot-note";
+    note.textContent = text;
+    parent.appendChild(note);
+  }
+
   function renderPanel() {
     injectStyles();
 
@@ -657,14 +880,26 @@
     }
 
     const settings = getEffectiveSettings();
-    const collapsed = Boolean(gmGet(PANEL_COLLAPSED_KEY, false));
+    if (!settings.enabled) {
+      panel = null;
+      return;
+    }
+
+    const collapsed = Boolean(gmGet(PANEL_COLLAPSED_KEY, true));
 
     panel = document.createElement("aside");
     panel.className = `${PANEL_CLASS}${collapsed ? " is-collapsed" : ""}`;
 
     const header = document.createElement("header");
     const title = document.createElement("span");
-    title.textContent = "RE Open Tab";
+    title.className = "re-hot-title";
+    const titleMain = document.createElement("span");
+    titleMain.className = "re-hot-title-main";
+    titleMain.textContent = "別タブで開く";
+    const titleSub = document.createElement("span");
+    titleSub.className = "re-hot-title-sub";
+    titleSub.textContent = currentHost;
+    title.append(titleMain, titleSub);
 
     const collapseButton = document.createElement("button");
     collapseButton.type = "button";
@@ -679,31 +914,42 @@
     const body = document.createElement("div");
     body.className = "re-hot-body";
 
-    body.appendChild(createCheckbox("enabled", `このサイトでON (${currentHost})`, settings.enabled));
+    body.appendChild(createCheckbox("enabled", "このページで有効にする", settings.enabled));
 
-    const targetSection = createSection("対象");
+    const targetSection = createSection("別タブ化するリンク");
+    appendNote(targetSection, "チェックした種類のリンクを、現在のタブを残して開きます。");
+    const targetGrid = document.createElement("div");
+    targetGrid.className = "re-hot-check-grid";
     [
-      ["drawingLinks", "図面リンク"],
+      ["normalLinks", "通常リンク"],
+      ["drawingLinks", "図面っぽいリンク"],
       ["pdfLinks", "PDFリンク"],
       ["detailLinks", "物件詳細リンク"],
       ["imageLinks", "画像リンク"],
-      ["jsLinkButtons", "JavaScriptリンク補助"],
+      ["jsLinkButtons", "JavaScriptで開くリンク"],
     ].forEach(([name, label]) => {
-      targetSection.appendChild(createCheckbox(name, label, settings[name]));
+      targetGrid.appendChild(createCheckbox(name, label, settings[name]));
     });
+    targetSection.appendChild(targetGrid);
 
-    const patchSection = createSection("補正");
+    const patchSection = createDetailsSection("開き方の補正");
+    appendNote(patchSection, "連続確認しやすいように、同じタブ名への上書きを避けます。");
+    const patchGrid = document.createElement("div");
+    patchGrid.className = "re-hot-check-grid";
     [
-      ["forceWindowOpenUnique", "window.open固定タブ名を回避"],
-      ["addOpenButtons", "リンク横に「別タブ」ボタンを追加"],
+      ["forceWindowOpenUnique", "window.open の固定タブ名を毎回変える"],
+      ["focusNewTabs", "開いたタブへ移動する"],
+      ["addOpenButtons", "JSリンクの横に「別タブ」ボタンを出す"],
     ].forEach(([name, label]) => {
-      patchSection.appendChild(createCheckbox(name, label, settings[name]));
+      patchGrid.appendChild(createCheckbox(name, label, settings[name]));
     });
+    patchSection.appendChild(patchGrid);
 
-    const selectorSection = createSection("サイト別設定");
+    const selectorSection = createDetailsSection("処理する範囲");
+    appendNote(selectorSection, "空欄ならページ全体を対象にします。CSSセレクタを1行ずつ指定できます。");
     const targetLabel = document.createElement("label");
     targetLabel.style.display = "block";
-    targetLabel.textContent = "対象セレクタ";
+    targetLabel.textContent = "対象にする場所";
     const targetTextarea = document.createElement("textarea");
     targetTextarea.name = "targetSelectors";
     targetTextarea.placeholder = ".search-result\n#main";
@@ -712,7 +958,7 @@
 
     const excludeLabel = document.createElement("label");
     excludeLabel.style.display = "block";
-    excludeLabel.textContent = "除外セレクタ";
+    excludeLabel.textContent = "除外する場所";
     const excludeTextarea = document.createElement("textarea");
     excludeTextarea.name = "excludeSelectors";
     excludeTextarea.placeholder = ".header\n.footer";
@@ -723,19 +969,9 @@
     const actions = document.createElement("div");
     actions.className = "re-hot-actions";
 
-    const saveButton = document.createElement("button");
-    saveButton.type = "button";
-    saveButton.textContent = "保存";
-    saveButton.addEventListener("click", () => {
-      const formValues = readPanelValues(body);
-      saveCurrentSiteSettings(formValues);
-      scan(document.body);
-      renderPanel();
-    });
-
     const resetButton = document.createElement("button");
     resetButton.type = "button";
-    resetButton.textContent = "設定リセット";
+    resetButton.textContent = "このページの設定をリセット";
     resetButton.addEventListener("click", () => {
       const allSiteSettings = getAllSiteSettings();
       delete allSiteSettings[currentHost];
@@ -744,10 +980,11 @@
       renderPanel();
     });
 
-    actions.append(saveButton, resetButton);
+    actions.append(resetButton);
     body.append(targetSection, patchSection, selectorSection, actions);
     panel.append(header, body);
     document.body.appendChild(panel);
+    bindInstantSettings(body);
   }
 
   function readPanelValues(root) {
@@ -767,6 +1004,37 @@
     return values;
   }
 
+  function applyPanelValues(root, options = {}) {
+    saveCurrentSiteSettings(readPanelValues(root));
+
+    if (options.render) {
+      renderPanel();
+    }
+
+    scan(document.body);
+  }
+
+  function bindInstantSettings(root) {
+    let inputTimer = 0;
+
+    root.addEventListener("change", (event) => {
+      if (event.target instanceof HTMLInputElement) {
+        applyPanelValues(root, { render: event.target.name === "enabled" });
+      }
+    });
+
+    root.addEventListener("input", (event) => {
+      if (!(event.target instanceof HTMLTextAreaElement)) {
+        return;
+      }
+
+      window.clearTimeout(inputTimer);
+      inputTimer = window.setTimeout(() => {
+        applyPanelValues(root);
+      }, 250);
+    });
+  }
+
   function registerMenus() {
     if (typeof GM_registerMenuCommand !== "function") {
       return;
@@ -775,8 +1043,8 @@
     GM_registerMenuCommand("このサイトでON/OFF切り替え", () => {
       const settings = getEffectiveSettings();
       setHostEnabled(currentHost, !settings.enabled);
-      scan(document.body);
       renderPanel();
+      scan(document.body);
     });
 
     GM_registerMenuCommand("RE Open Tab 設定リセット", () => {

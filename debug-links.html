@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>リンク開き方デバッグページ</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --text: #20242a;
+      --muted: #657080;
+      --line: #d9dee7;
+      --accent: #1267c4;
+      --accent-weak: #e7f0fb;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.6;
+    }
+
+    header {
+      padding: 32px 24px 20px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    h1 {
+      max-width: 980px;
+      margin: 0 auto;
+      font-size: clamp(24px, 4vw, 36px);
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 980px;
+      margin: 8px auto 0;
+      color: var(--muted);
+    }
+
+    section {
+      margin: 0 0 18px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .link-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .link-item {
+      min-height: 92px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+    }
+
+    a,
+    button.linklike,
+    input[type="submit"] {
+      color: var(--accent);
+      font: inherit;
+      font-weight: 650;
+    }
+
+    a {
+      text-decoration-thickness: 1px;
+      text-underline-offset: 3px;
+    }
+
+    button.linklike,
+    input[type="submit"] {
+      padding: 0;
+      border: 0;
+      background: transparent;
+      text-decoration: underline;
+      text-decoration-thickness: 1px;
+      text-underline-offset: 3px;
+      cursor: pointer;
+    }
+
+    .meta {
+      display: block;
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .target-box {
+      min-height: 160px;
+      padding: 14px;
+      border: 1px dashed #9aa8ba;
+      border-radius: 8px;
+      background: var(--accent-weak);
+    }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: #eef1f5;
+      font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      font-size: 0.95em;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>リンク開き方デバッグページ</h1>
+    <p class="lead">同じように見えるリンクテキストを、通常遷移、別タブ、JavaScript、フォーム、アンカーなど複数パターンで配置しています。</p>
+  </header>
+
+  <main>
+    <section aria-labelledby="standard-links">
+      <h2 id="standard-links">通常のリンク</h2>
+      <ul class="link-grid">
+        <li class="link-item">
+          <a href="https://example.com/">Example を開く</a>
+          <span class="meta">通常の <code>&lt;a href&gt;</code>。同じタブで遷移します。</span>
+        </li>
+        <li class="link-item">
+          <a href="https://example.com/" target="_blank">Example を別タブで開く</a>
+          <span class="meta"><code>target="_blank"</code>。ブラウザ設定により新しいタブまたはウィンドウ。</span>
+        </li>
+        <li class="link-item">
+          <a href="https://example.com/" target="_blank" rel="noopener noreferrer">Example を安全に別タブで開く</a>
+          <span class="meta"><code>target="_blank" rel="noopener noreferrer"</code>。</span>
+        </li>
+        <li class="link-item">
+          <a href="https://example.com/" target="debug_named_tab">Example を名前付きタブで開く</a>
+          <span class="meta"><code>target="debug_named_tab"</code>。同じ名前の閲覧コンテキストを再利用します。</span>
+        </li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="special-links">
+      <h2 id="special-links">特殊なリンク</h2>
+      <ul class="link-grid">
+        <li class="link-item">
+          <a href="#anchor-target">ページ内の説明へ移動</a>
+          <span class="meta">ハッシュ付きのページ内アンカーです。</span>
+        </li>
+        <li class="link-item">
+          <a href="https://example.com/" download>download 属性付きリンク</a>
+          <span class="meta"><code>download</code> 属性付き。クロスオリジンでは通常ダウンロードにならない場合があります。</span>
+        </li>
+        <li class="link-item">
+          <a href="mailto:test@example.com?subject=%E3%83%86%E3%82%B9%E3%83%88">メール作成リンク</a>
+          <span class="meta"><code>mailto:</code>。既定のメールクライアントを開きます。</span>
+        </li>
+        <li class="link-item">
+          <a href="tel:+810000000000">電話リンク</a>
+          <span class="meta"><code>tel:</code>。端末やブラウザにより動作が変わります。</span>
+        </li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="target-links">
+      <h2 id="target-links">RE Open Tab 検出用リンク</h2>
+      <ul class="link-grid">
+        <li class="link-item">
+          <a href="/samples/room-layout.pdf">PDF資料を開く</a>
+          <span class="meta">URLに <code>.pdf</code> を含む通常リンクです。</span>
+        </li>
+        <li class="link-item">
+          <a href="/property/detail/12345">物件詳細を開く</a>
+          <span class="meta">URLに <code>/detail/</code> を含む通常リンクです。</span>
+        </li>
+        <li class="link-item">
+          <a href="/images/floor-plan.jpg">画像リンクを開く</a>
+          <span class="meta">URLに <code>.jpg</code> を含む通常リンクです。初期設定ではOFF対象です。</span>
+        </li>
+        <li class="link-item">
+          <a href="#" onclick="event.preventDefault(); window.open('/samples/js-layout.pdf', 'pdf');">JSでPDFを開く</a>
+          <span class="meta">onclick 内の <code>.pdf</code> を検出し、補助ボタン追加を確認します。</span>
+        </li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="script-links">
+      <h2 id="script-links">JavaScript で開くリンク</h2>
+      <ul class="link-grid">
+        <li class="link-item">
+          <a href="https://example.com/" onclick="event.preventDefault(); window.open(this.href, '_blank');">JSで別タブを開く</a>
+          <span class="meta">クリックイベントで <code>window.open(url, "_blank")</code> を実行します。</span>
+        </li>
+        <li class="link-item">
+          <a href="https://example.com/" onclick="event.preventDefault(); window.location.href = this.href;">JSで同じタブを開く</a>
+          <span class="meta">クリックイベントで <code>window.location.href</code> を変更します。</span>
+        </li>
+        <li class="link-item">
+          <button class="linklike" type="button" onclick="window.open('https://example.com/', '_blank', 'noopener')">ボタンから別タブを開く</button>
+          <span class="meta"><code>&lt;button&gt;</code> をリンク風に見せ、クリックで開きます。</span>
+        </li>
+        <li class="link-item">
+          <form action="https://example.com/" method="get" target="_blank">
+            <input type="submit" value="フォーム送信で別タブを開く">
+          </form>
+          <span class="meta"><code>&lt;form target="_blank"&gt;</code> による遷移です。</span>
+        </li>
+      </ul>
+    </section>
+
+    <section id="anchor-target" aria-labelledby="anchor-heading">
+      <h2 id="anchor-heading">ページ内アンカーの到達先</h2>
+      <div class="target-box">
+        ここは <code>#anchor-target</code> の移動先です。リンク検出や別タブ化処理が、ページ内リンクを外部リンクと同じように扱っていないか確認できます。
+      </div>
+    </section>
+  </main>
+</body>
+</html>
